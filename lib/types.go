@@ -113,13 +113,21 @@ type OneOf[T any] struct {
 
 	fuzzNode FuzzNode
 
-	// eligibleIndexes/weights correspond 1:1, holding the struct field
-	// index and resolved OneOf weight for every field considered during
-	// the weighted pick in Init (not just the one that was picked).
-	// Preserved so Config() can reproduce the same pick given the same
-	// seed.
+	// eligibleIndexes holds the struct field index for every field
+	// considered during the weighted pick in Init (not just the one that
+	// was picked).
 	eligibleIndexes []int
-	weights         []float64
+
+	// fieldConfigs holds, for every eligible field (keyed by field name),
+	// the config merged in Init - the struct tag's own defaults, any
+	// override from the raw meta.Config, and the resolved OneOf weight.
+	// This is the same config each field would have been parsed with had
+	// it been picked, so Config() can report it for fields that weren't:
+	// their fuzz node was never built, so this Init-time config is the
+	// only (and, since it's what determined their weight, the config
+	// needed to reproduce the same pick given the same seed) config
+	// available for them.
+	fieldConfigs StructConfig
 }
 
 func (o *OneOf[T]) Kind() FuzzNodeKind {
@@ -145,6 +153,7 @@ func (o *OneOf[T]) Init(f Fuzzer, meta FuzzMeta) error {
 		indexes []int
 		weights []float64
 	)
+	fieldConfigs := StructConfig{}
 
 	for i := range t.NumField() {
 		fieldType := t.Field(i)
@@ -167,9 +176,18 @@ func (o *OneOf[T]) Init(f Fuzzer, meta FuzzMeta) error {
 		if err := weightConfig.Parse(fieldConfig); err != nil {
 			return fmt.Errorf("failed to parse OneOf weight for field %s: %w", fieldType.Name, err)
 		}
+		// Merge the resolved weight back in - fieldConfig only has a
+		// "weight" key at all if the fuzz tag set one explicitly, but
+		// Config() below needs the resolved value (default or not) so it
+		// can reproduce the same pick given the same seed.
+		weightCfg, err := json.Marshal(weightConfig)
+		if err != nil {
+			return fmt.Errorf("failed to marshal OneOf weight for field %s: %w", fieldType.Name, err)
+		}
 
 		indexes = append(indexes, i)
 		weights = append(weights, float64(weightConfig.Weight))
+		fieldConfigs[fieldType.Name] = MergeConfigs(fieldConfig, weightCfg)
 	}
 
 	if len(indexes) < 2 {
@@ -177,7 +195,7 @@ func (o *OneOf[T]) Init(f Fuzzer, meta FuzzMeta) error {
 	}
 
 	o.eligibleIndexes = indexes
-	o.weights = weights
+	o.fieldConfigs = fieldConfigs
 
 	o.pickedIndex = WeightedPick(f.Context(), indexes, weights)
 	o.pickedField = t.Field(o.pickedIndex)
@@ -185,14 +203,9 @@ func (o *OneOf[T]) Init(f Fuzzer, meta FuzzMeta) error {
 
 	fieldName := o.pickedField.Name
 
-	fieldConfig, err := MergeStructFieldConfig(o.pickedField.Tag.Get("fuzz"), structConfig[fieldName])
-	if err != nil {
-		return fmt.Errorf("failed to derive struct field %s config: %w", fieldName, err)
-	}
-
 	fuzzNode, err := f.Parse(o.pickedValue, FuzzMeta{
 		Scope:  meta.Scope.Next(fieldName),
-		Config: fieldConfig,
+		Config: fieldConfigs[fieldName],
 	})
 	if err != nil || fuzzNode == nil {
 		return fmt.Errorf("failed to parse struct field %s: %w", fieldName, err)
@@ -215,26 +228,24 @@ func (o *OneOf[T]) Get() *T {
 }
 
 // Config returns a StructConfig-shaped JSON object over every field
-// eligible for the weighted pick: each gets its resolved "weight", and the
-// picked field additionally gets its nested (fully-resolved) config merged
-// in. Non-picked fields' internal structure was never built, so only their
-// weight - which is sufficient to reproduce the same pick given the same
-// seed - is preserved.
+// eligible for the weighted pick, not just the one that was: each gets the
+// config merged for it in Init (struct tag defaults, any raw override, and
+// the resolved weight - see fieldConfigs' doc comment), and the picked
+// field's entry additionally has its fuzz node's nested (fully-resolved)
+// config merged on top, since that's more complete than what was known
+// about it in Init.
 func (o *OneOf[T]) Config() RawConfig {
 	t := reflect.TypeOf(o.obj)
 
 	cfg := StructConfig{}
-	for i, fieldIndex := range o.eligibleIndexes {
-		weightCfg, err := json.Marshal(OneOfConfig{Weight: Float64(o.weights[i])})
-		if err != nil {
-			continue
-		}
-
+	for _, fieldIndex := range o.eligibleIndexes {
 		fieldName := t.Field(fieldIndex).Name
+		fieldConfig := o.fieldConfigs[fieldName]
+
 		if fieldIndex == o.pickedIndex {
-			cfg[fieldName] = MergeConfigs(weightCfg, o.fuzzNode.Config())
+			cfg[fieldName] = MergeConfigs(fieldConfig, o.fuzzNode.Config())
 		} else {
-			cfg[fieldName] = weightCfg
+			cfg[fieldName] = fieldConfig
 		}
 	}
 

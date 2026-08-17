@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	policyapi "github.com/cilium/cilium/pkg/policy/api"
@@ -20,7 +21,8 @@ type PolicyTest struct {
 }
 
 type EndpointConfig struct {
-	Node string `json:"node"`
+	Node         string `json:"node"`
+	NodeSelector string `json:"nodeSelector"`
 }
 
 func (c *EndpointConfig) Parse(config lib.RawConfig) error {
@@ -42,6 +44,34 @@ func (e *Endpoint) Namespaced() bool { return true }
 func (e *Endpoint) Object(meta *lib.ResourceMetadata) lib.K8sObject {
 	replicas := max(int32(e.Replicas), 1)
 
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{
+			{
+				Name:            "app",
+				Image:           "nginx:latest",
+				ImagePullPolicy: corev1.PullIfNotPresent,
+			},
+		},
+		// Always tolerate kfuzz/block taint on the nodes.
+		Tolerations: []corev1.Toleration{
+			{
+				Key:    "kfuzz.cilium.io/block",
+				Value:  "true",
+				Effect: "NoSchedule",
+			},
+		},
+	}
+	switch {
+	case e.config.Node != "":
+		// Node pins the pod directly via nodeName, bypassing the scheduler
+		// entirely - takes precedence since it's the more specific request.
+		podSpec.NodeName = e.config.Node
+	case e.config.NodeSelector != "":
+		if key, value, ok := strings.Cut(e.config.NodeSelector, "="); ok {
+			podSpec.NodeSelector = map[string]string{key: value}
+		}
+	}
+
 	return &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		Spec: appsv1.DeploymentSpec{
@@ -49,12 +79,7 @@ func (e *Endpoint) Object(meta *lib.ResourceMetadata) lib.K8sObject {
 			Selector: &metav1.LabelSelector{MatchLabels: meta.Labels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: meta.Labels},
-				Spec: corev1.PodSpec{
-					NodeName: e.config.Node,
-					Containers: []corev1.Container{
-						{Name: "app", Image: "nginx:latest"},
-					},
-				},
+				Spec:       podSpec,
 			},
 		},
 	}

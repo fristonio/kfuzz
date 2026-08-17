@@ -9,6 +9,15 @@ import (
 	"strings"
 )
 
+type FuzzChanceConfig struct {
+	FuzzChance Chance `json:"fuzzChance"`
+}
+
+func (c *FuzzChanceConfig) Parse(raw RawConfig) error {
+	c.FuzzChance = 1.0
+	return json.Unmarshal(raw, c)
+}
+
 type Config interface {
 	Parse(RawConfig) error
 }

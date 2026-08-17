@@ -17,8 +17,8 @@ import (
 
 var hiveApp = hive.NewWithOptions(
 	hive.Options{
-		StartTimeout: time.Second * 10,
-		StopTimeout:  time.Second * 60,
+		StartTimeout: time.Second * 30,
+		StopTimeout:  time.Second * 300,
 	},
 
 	job.Cell,

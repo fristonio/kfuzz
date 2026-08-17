@@ -33,10 +33,18 @@ func (f *fuzzer) ParseCustomFuzzer(value reflect.Value, meta FuzzMeta) (FuzzNode
 	return nil, nil
 }
 
-type valueFuzzer struct {
-	config any
+type valueFuzzerConfig struct {
+	FuzzChanceConfig `json:",inline"`
+	Config           any `json:",inline"`
+}
 
+type valueFuzzer struct {
+	ctx *FuzzContext
+
+	config     valueFuzzerConfig
 	fuzzInvoke func()
+
+	fuzzedOnce bool
 }
 
 func (v *valueFuzzer) Kind() FuzzNodeKind {
@@ -44,7 +52,12 @@ func (v *valueFuzzer) Kind() FuzzNodeKind {
 }
 
 func (v *valueFuzzer) Fuzz() {
-	v.fuzzInvoke()
+	// FuzzChance 0 indicates that the value is to be fuzzed just once initially
+	// and then virtually remains unchanged.
+	if !v.fuzzedOnce || v.config.FuzzChance.Next(v.ctx) {
+		v.fuzzInvoke()
+		v.fuzzedOnce = true
+	}
 }
 
 func (v *valueFuzzer) Close() {}
@@ -66,13 +79,22 @@ func (f *fuzzer) ParseValueFuzzer(value reflect.Value, meta FuzzMeta) (FuzzNode,
 			return nil, err
 		}
 
+		fuzzChance := FuzzChanceConfig{}
+		if err := fuzzChance.Parse(meta.Config); err != nil {
+			return nil, fmt.Errorf("failed to parse value fuzz chance config")
+		}
+
 		cfg := reflect.New(handler.configType.Elem()).Interface().(Config)
 		if err := cfg.Parse(meta.Config); err != nil {
 			return nil, fmt.Errorf("failed to parse config: %w", err)
 		}
 
 		return &valueFuzzer{
-			config: cfg,
+			ctx: f.ctx,
+			config: valueFuzzerConfig{
+				FuzzChanceConfig: fuzzChance,
+				Config:           cfg,
+			},
 			fuzzInvoke: func() {
 				handler.value.Call([]reflect.Value{
 					reflect.ValueOf(f.ctx),
