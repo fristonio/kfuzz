@@ -20,13 +20,15 @@ import (
 )
 
 const (
-	TestNamespace string = "kfuzz"
+	defaultTestNamespace string = "kfuzz"
 )
 
 // K8sClient applies and deletes Kubernetes resources. Apply and Delete
 // merely enqueue work and return immediately; Execute dispatches everything
 // queued so far to the backend, paced by a TuningSet.
 type K8sClient interface {
+	Namespace() string
+
 	// Apply applies obj to the cluster. prev is the last applied version of
 	// the object, or nil for a first-time create.
 	Apply(prev, obj clik8s.Object)
@@ -43,6 +45,8 @@ type K8sClient interface {
 type ClientConfig struct {
 	DryRun bool
 
+	TestNamespace string
+
 	ClientTuningSet string
 
 	ClientQPS       float64
@@ -51,6 +55,7 @@ type ClientConfig struct {
 }
 
 func (c ClientConfig) Flags(fs *pflag.FlagSet) {
+	fs.StringP("test-namespace", "n", defaultTestNamespace, "Namespace to create resources in")
 	fs.Bool("dry-run", false, "Log Kubernetes operations to ./kfuzz-dry-run.log instead of applying them to a real cluster")
 	fs.String("client-tuning-set", "qps", "Load pattern used to pace Kubernetes API calls: qps, randomized, or stepped")
 	fs.Float64("client-qps", 32, "Target average queries-per-second, for the qps and randomized tuning sets")
@@ -75,7 +80,7 @@ func NewK8sClient(cfg ClientConfig) (K8sClient, error) {
 		return nil, fmt.Errorf("creating k8s backend: %w", err)
 	}
 
-	return newClient(backend, tuningSet), nil
+	return newClient(backend, tuningSet, cfg.TestNamespace), nil
 }
 
 // NewDryRunClient returns a K8sClient that never touches a real cluster,
@@ -140,19 +145,30 @@ type client struct {
 	backend   k8sBackend
 	tuningSet TuningSet
 
+	namespace string
+
 	tick  atomic.Int64
 	mu    sync.Mutex
 	queue []resourceAction
 }
 
-func newClient(backend k8sBackend, tuningSet TuningSet) *client {
-	return &client{backend: backend, tuningSet: tuningSet, tick: atomic.Int64{}}
+func newClient(backend k8sBackend, tuningSet TuningSet, namespace string) *client {
+	return &client{
+		backend:   backend,
+		tuningSet: tuningSet,
+		namespace: namespace,
+		tick:      atomic.Int64{},
+	}
 }
 
 func (c *client) enqueue(ra resourceAction) {
 	c.mu.Lock()
 	c.queue = append(c.queue, ra)
 	c.mu.Unlock()
+}
+
+func (c *client) Namespace() string {
+	return c.namespace
 }
 
 func (c *client) Apply(prev, obj clik8s.Object) {
@@ -233,6 +249,10 @@ func (c opCounts) record(kind, op string) {
 }
 
 func (c opCounts) log(tick int64) {
+	if tick == 1 {
+		slog.Info("Initialized k8s resources")
+	}
+
 	for kind, ops := range c {
 		args := make([]any, 0, len(ops)*2+4)
 

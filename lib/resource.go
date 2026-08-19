@@ -191,7 +191,8 @@ func (r *Resource[T]) apply() {
 
 	obj.SetName(r.objMeta.Name)
 	if r.obj.Namespaced() {
-		obj.SetNamespace(TestNamespace)
+		ns := r.fuzzer.Context().client.Namespace()
+		obj.SetNamespace(ns)
 	}
 	if r.objMeta.Labels != nil {
 		obj.SetLabels(r.objMeta.Labels)
