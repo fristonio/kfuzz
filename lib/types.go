@@ -54,12 +54,13 @@ func FuzzNumeric[T Numeric](ctx *FuzzContext, config *NumericConfig[T], out *T) 
 type CIDR string
 
 func FuzzCIDR(ctx *FuzzContext, config *EmptyConfig, out *CIDR) {
+	start := 200 + ctx.rand.IntN(50)
 	oc1 := ctx.rand.IntN(256)
 	oc2 := ctx.rand.IntN(256)
 	oc3 := ctx.rand.IntN(256)
-	prefix := 28 + ctx.rand.IntN(5) // /28 to /32
+	prefix := 30 + ctx.rand.IntN(3) // /30 to /32
 
-	*out = CIDR(fmt.Sprintf("100.%d.%d.%d/%d", oc1, oc2, oc3, prefix))
+	*out = CIDR(fmt.Sprintf("%d.%d.%d.%d/%d", start, oc1, oc2, oc3, prefix))
 }
 
 type Port string

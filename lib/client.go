@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/dynamic"
 )
 
 const (
@@ -52,6 +53,14 @@ type ClientConfig struct {
 	ClientQPS       float64
 	ClientBurstSize int
 	ClientStepDelay time.Duration
+
+	// KubeAPIQPS and KubeAPIBurst configure client-go's own internal rate
+	// limiter on the REST client used for Apply/Delete. This is a separate
+	// layer from the tuning set above: if left at 0, client-go silently
+	// falls back to rest.DefaultQPS/DefaultBurst (5 QPS / 10 burst), which
+	// caps real throughput far below any tuning set target.
+	KubeAPIQPS   float64
+	KubeAPIBurst int
 }
 
 func (c ClientConfig) Flags(fs *pflag.FlagSet) {
@@ -61,6 +70,8 @@ func (c ClientConfig) Flags(fs *pflag.FlagSet) {
 	fs.Float64("client-qps", 32, "Target average queries-per-second, for the qps and randomized tuning sets")
 	fs.Int("client-burst-size", 16, "Number of operations dispatched back-to-back before pausing, for the stepped/qps tuning set")
 	fs.Duration("client-step-delay", time.Second, "Pause between bursts, for the stepped tuning set")
+	fs.Float64("kube-api-qps", 0, "client-go rate limit (queries per second) for the underlying Kubernetes REST client; 0 derives a value from client-qps/client-burst-size that's high enough to not throttle the tuning set")
+	fs.Int("kube-api-burst", 0, "client-go burst size for the underlying Kubernetes REST client; see kube-api-qps")
 }
 
 // NewK8sClient constructs a K8sClient according to cfg.
@@ -74,13 +85,54 @@ func NewK8sClient(cfg ClientConfig) (K8sClient, error) {
 	if cfg.DryRun {
 		backend, err = newDryRunBackend()
 	} else {
-		backend, err = clik8s.NewClient("", "", "", "", nil)
+		backend, err = newClusterBackend(cfg)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("creating k8s backend: %w", err)
 	}
 
 	return newClient(backend, tuningSet, cfg.TestNamespace), nil
+}
+
+// newClusterBackend builds a real cluster k8sBackend, then raises client-go's
+// own internal rate limiter above the tuning set's target. clik8s.NewClient
+// loads a rest.Config with QPS/Burst left at zero, so without this the
+// DynamicClientset it builds silently falls back to client-go's defaults
+// (5 QPS / 10 burst, see rest.DefaultQPS/DefaultBurst) no matter how the
+// tuning set above is configured.
+func newClusterBackend(cfg ClientConfig) (*clik8s.Client, error) {
+	c, err := clik8s.NewClient("", "", "", "", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	qps, burst := kubeAPIRateLimit(cfg)
+	c.Config.QPS = float32(qps)
+	c.Config.Burst = burst
+
+	dynamicClientset, err := dynamic.NewForConfig(c.Config)
+	if err != nil {
+		return nil, fmt.Errorf("building dynamic client with tuned rate limit: %w", err)
+	}
+	c.DynamicClientset = dynamicClientset
+
+	return c, nil
+}
+
+// kubeAPIRateLimit picks the client-go rate limit for the underlying REST
+// client: the configured KubeAPIQPS/KubeAPIBurst if given, otherwise a value
+// comfortably above the tuning set's own target so client-go's internal
+// limiter never becomes the actual bottleneck.
+func kubeAPIRateLimit(cfg ClientConfig) (qps float64, burst int) {
+	qps = cfg.KubeAPIQPS
+	if qps <= 0 {
+		qps = max(cfg.ClientQPS, 64)
+	}
+	burst = cfg.KubeAPIBurst
+	if burst <= 0 {
+		burst = max(cfg.ClientBurstSize, 128)
+	}
+	return qps, burst
 }
 
 // NewDryRunClient returns a K8sClient that never touches a real cluster,

@@ -35,7 +35,7 @@ func (f *fuzzer) ParseCustomFuzzer(value reflect.Value, meta FuzzMeta) (FuzzNode
 
 type valueFuzzerConfig struct {
 	FuzzChanceConfig `json:",inline"`
-	Config           any `json:",inline"`
+	Config           any
 }
 
 type valueFuzzer struct {
@@ -84,8 +84,15 @@ func (f *fuzzer) ParseValueFuzzer(value reflect.Value, meta FuzzMeta) (FuzzNode,
 			return nil, fmt.Errorf("failed to parse value fuzz chance config")
 		}
 
+		var valueConfig struct {
+			Config RawConfig `json:"Config"`
+		}
+		if err := json.Unmarshal(meta.Config, &valueConfig); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal value config override: %w", err)
+		}
+
 		cfg := reflect.New(handler.configType.Elem()).Interface().(Config)
-		if err := cfg.Parse(meta.Config); err != nil {
+		if err := cfg.Parse(MergeConfigs(meta.Config, valueConfig.Config)); err != nil {
 			return nil, fmt.Errorf("failed to parse config: %w", err)
 		}
 
@@ -112,10 +119,24 @@ func (f *fuzzer) ParseValueFuzzer(value reflect.Value, meta FuzzMeta) (FuzzNode,
 	return nil, nil
 }
 
+// structField pairs a field's name with its FuzzNode, preserving the struct's
+// declaration order - see structFuzzer's fields doc comment.
+type structField struct {
+	name string
+	node FuzzNode
+}
+
 type structFuzzer struct {
 	config *StructConfig
 
-	fields map[string]FuzzNode
+	// fields is ordered by struct field declaration (see ParseStructFuzzer),
+	// not keyed by name, so Fuzz/Close always visit fields in the same order
+	// given the same type - unlike a map, whose range order Go randomizes on
+	// every iteration. Fields consume a data-dependent number of draws from
+	// the fuzzer's single shared *rand.Rand, so a random visit order would
+	// make the whole tree's output depend on iteration order rather than
+	// just the seed.
+	fields []structField
 }
 
 func (f *structFuzzer) Kind() FuzzNodeKind {
@@ -123,14 +144,14 @@ func (f *structFuzzer) Kind() FuzzNodeKind {
 }
 
 func (f *structFuzzer) Fuzz() {
-	for _, node := range f.fields {
-		node.Fuzz()
+	for _, field := range f.fields {
+		field.node.Fuzz()
 	}
 }
 
 func (f *structFuzzer) Close() {
-	for _, node := range f.fields {
-		node.Close()
+	for _, field := range f.fields {
+		field.node.Close()
 	}
 }
 
@@ -138,8 +159,8 @@ func (f *structFuzzer) Close() {
 // to that field's own fully-resolved (nested) config.
 func (f *structFuzzer) Config() RawConfig {
 	cfg := StructConfig{}
-	for name, node := range f.fields {
-		cfg[name] = node.Config()
+	for _, field := range f.fields {
+		cfg[field.name] = field.node.Config()
 	}
 
 	data, err := json.Marshal(cfg)
@@ -159,7 +180,6 @@ func (f *fuzzer) ParseStructFuzzer(v reflect.Value, meta FuzzMeta) (FuzzNode, er
 
 	node := &structFuzzer{
 		config: &fuzzConfig,
-		fields: make(map[string]FuzzNode),
 	}
 
 	t := v.Type()
@@ -190,7 +210,7 @@ func (f *fuzzer) ParseStructFuzzer(v reflect.Value, meta FuzzMeta) (FuzzNode, er
 		}
 
 		if fieldNode != nil {
-			node.fields[fieldName] = fieldNode
+			node.fields = append(node.fields, structField{name: fieldName, node: fieldNode})
 		}
 	}
 

@@ -15,9 +15,9 @@ import (
 type PolicyTest struct {
 	LocalEndpoints  []*K8sEndpoint  `fuzz:"labelScope=local_endpoints,node=kind-worker,sliceSize=4-8,sliceAddCount=1,sliceAddChance=0.05,sliceDeleteCount=1,sliceDeleteChance=0.05,sliceUpdateCount=1-2,sliceUpdateChance=0.1"`
 	RemoteEndpoints []*K8sEndpoint  `fuzz:"labelScope=remote_endpoints,sliceSize=4-8,sliceAddCount=1-3,sliceAddChance=0.1,sliceDeleteCount=1-2,sliceDeleteChance=0.1,sliceUpdateCount=1-3,sliceUpdateChance=0.25"`
-	CIDRGroups      []*K8sCIDRGroup `fuzz:"labelScope=cidr_groups,sliceSize=4-64,sliceAddCount=4-8,sliceAddChance=0.1,sliceDeleteCount=4-8,sliceDeleteChance=0.1,sliceUpdateCount=4-8,sliceUpdateChance=0.1"`
+	CIDRGroups      []*K8sCIDRGroup `fuzz:"labelScope=cidr_groups,sliceSize=16-64,sliceAddCount=4-8,sliceAddChance=0.25,sliceDeleteCount=4-8,sliceDeleteChance=0.25,sliceUpdateCount=2-8,sliceUpdateChance=0.1"`
 
-	Policies []*K8sPolicy `fuzz:"sliceSize=4-16,sliceAddCount=1-4,sliceAddChance=0.1,sliceDeleteCount=1-4,sliceDeleteChance=0.1,sliceUpdateCount=2-8,sliceUpdateChance=0.2"`
+	Policies []*K8sPolicy `fuzz:"sliceSize=16-32,sliceAddCount=2-8,sliceAddChance=0.25,sliceDeleteCount=1-8,sliceDeleteChance=0.25,sliceUpdateCount=2-8,sliceUpdateChance=0.25"`
 }
 
 type EndpointConfig struct {
@@ -48,7 +48,7 @@ func (e *Endpoint) Object(meta *lib.ResourceMetadata) lib.K8sObject {
 		Containers: []corev1.Container{
 			{
 				Name:            "app",
-				Image:           "nginx:latest",
+				Image:           "registry.k8s.io/pause:3.10",
 				ImagePullPolicy: corev1.PullIfNotPresent,
 			},
 		},

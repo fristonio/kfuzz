@@ -80,12 +80,12 @@ func (r *Resource[T]) Init(f Fuzzer, meta FuzzMeta) error {
 		key := labelManagerKey(config.LabelScope)
 		lm, ok := GetContextValue[*LabelManager](f.Context(), key)
 		if !ok {
-			lm = NewLabelManager()
+			lm = NewLabelManager(config.LabelScope)
 			SetContextValue(f.Context(), key, lm)
 		}
 
 		r.labelManager = lm
-		r.objMeta.Labels = lm.AllocateLabels()
+		r.objMeta.Labels = lm.AllocateLabels(f.Context())
 	}
 
 	// Similar to OneOf, construct the underlying resource object and build
@@ -136,7 +136,7 @@ func (r *Resource[T]) initObjConfig(rawConfig RawConfig) error {
 
 func (r *Resource[T]) Fuzz() {
 	if r.last != nil && r.resourceConfig.MetaUpdateChance.Next(r.fuzzer.Context()) {
-		r.objMeta.Labels = r.labelManager.ReallocateLabels(r.objMeta.Labels)
+		r.objMeta.Labels = r.labelManager.ReallocateLabels(r.fuzzer.Context(), r.objMeta.Labels)
 		return
 	}
 

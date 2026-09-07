@@ -104,6 +104,8 @@ func (h *Harness[T]) Stop(ctx context.Context) error {
 		h.logger.Info("Skipping cleanup, fuzzer not closed")
 		return nil
 	}
+
+	h.logger.Info("Closing fuzzer and cleaning up the resources")
 	h.fuzzer.Close()
 	h.client.Execute(ctx)
 	return nil
