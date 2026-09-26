@@ -7,7 +7,7 @@ DEFAULT_CONFIG_FILE ?= $(ROOT_DIR)/hack/config.json
 
 IMAGE_REGISTRY ?=
 IMAGE_NAME ?= fristonio/kfuzz
-IMAGE_TAG ?= latest
+IMAGE_TAG ?= cilium
 IMAGE_PLATFORM ?= linux/amd64,linux/arm64
 
 ##@ Build and Run

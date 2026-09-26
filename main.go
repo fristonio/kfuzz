@@ -18,6 +18,8 @@ import (
 var hiveApp = hive.NewWithOptions(
 	hive.Options{
 		StartTimeout: time.Second * 30,
+		// Keep the stop timeout sufficiently high.
+		// We run this within the cluster usually so termination grace period should take care of force stop.
 		StopTimeout:  time.Hour,
 	},
 

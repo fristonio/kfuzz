@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/cilium/hive"
 	"github.com/cilium/hive/cell"
 	"github.com/cilium/hive/job"
 	"github.com/spf13/pflag"
@@ -16,6 +17,7 @@ import (
 type HarnessConfig struct {
 	ConfigFile   string
 	TickInterval time.Duration
+	RunDuration  time.Duration
 	Seed         uint64
 	SkipCleanup  bool
 }
@@ -23,6 +25,7 @@ type HarnessConfig struct {
 func (c HarnessConfig) Flags(fs *pflag.FlagSet) {
 	fs.StringP("config-file", "c", "", "Config file path with overrides for the harness")
 	fs.DurationP("tick-interval", "t", 5*time.Second, "Interval between fuzz iteration tick")
+	fs.Duration("run-duration", 0, "Duration to run before shutting down (0 disables automatic shutdown)")
 	fs.Uint64P("seed", "s", 42, "Seed to use for creating fuzz random source")
 	fs.Bool("skip-cleanup", false, "Option to specify if the resources should be cleaned up after the harness run is complete/stopped")
 }
@@ -33,19 +36,22 @@ type Harness[T any] struct {
 
 	ctx *FuzzContext
 
-	logger *slog.Logger
-	config HarnessConfig
-	client K8sClient
+	logger     *slog.Logger
+	config     HarnessConfig
+	client     K8sClient
+	shutdowner hive.Shutdowner
+	startTime  time.Time
 
 	trigger job.Trigger
 	runner  job.Group
 }
 
-func NewHarness[T any](logger *slog.Logger, lc cell.Lifecycle, jg job.Group, cfg HarnessConfig, client K8sClient) *Harness[T] {
+func NewHarness[T any](logger *slog.Logger, lc cell.Lifecycle, jg job.Group, shutdowner hive.Shutdowner, cfg HarnessConfig, client K8sClient) *Harness[T] {
 	h := &Harness[T]{
-		logger: logger,
-		config: cfg,
-		client: client,
+		logger:     logger,
+		config:     cfg,
+		client:     client,
+		shutdowner: shutdowner,
 
 		trigger: job.NewTrigger(),
 		runner:  jg,
@@ -59,11 +65,11 @@ func NewHarness[T any](logger *slog.Logger, lc cell.Lifecycle, jg job.Group, cfg
 			return h.Stop(ctx)
 		},
 	})
-
 	return h
 }
 
 func (h *Harness[T]) Start(ctx context.Context) error {
+	h.startTime = time.Now()
 	h.logger.Info("Starting test harness")
 
 	objKind := reflect.TypeFor[T]().Kind()
@@ -112,6 +118,17 @@ func (h *Harness[T]) Stop(ctx context.Context) error {
 }
 
 func (h *Harness[T]) Run(ctx context.Context) error {
+	if h.config.RunDuration > 0 && time.Since(h.startTime) >= h.config.RunDuration {
+		stopTime := time.Now()
+		h.logger.Info("Run duration elapsed, shutting down",
+			"start-time", h.startTime,
+			"stop-time", stopTime,
+			"actual-run-duration", stopTime.Sub(h.startTime),
+		)
+		h.shutdowner.Shutdown()
+		return nil
+	}
+
 	h.fuzzer.Fuzz()
 	h.client.Execute(ctx)
 	return nil

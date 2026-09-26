@@ -22,16 +22,16 @@ var (
 	LabelBucketsSize     = []int{2, 4, 8, 16, 32, 64, 128}
 	NoMatchLabelSelector = slim_metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"cilium.io/no-match-selector": "true",
+			"kfuzz.cilium.io/no-match": "true",
 		},
 	}
 )
 
 const (
-	labelScopeKey     = "cilium.labels/scope"
-	uniqueLabelKey    = "cilium.labels/unique"
-	staticLabelPrefix = "cilium.labels/static-"
-	bucketLabelPrefix = "cilium.labels/bucket-"
+	labelScopeKey     = "kfuzz.cilium.io/scope"
+	uniqueLabelKey    = "kfuzz.cilium.io/unique"
+	staticLabelPrefix = "kfuzz.cilium.io/static-"
+	bucketLabelPrefix = "kfuzz.cilium.io/bucket-"
 )
 
 type LabelSelectorConfig struct {
@@ -195,9 +195,9 @@ func NewLabelManager(scope string) *LabelManager {
 // Usually called during the init of a k8s resource.
 //
 // Labels format:
-// Static: cilium.labels/static-<key> = <value>
-// Unique: cilium.labels/unique = <unique-value>
-// Bucket: cilium.labels/bucket-<bucket-size> = <bucket-pool-value>
+// Static: kfuzz.cilium.io/static-<key> = <value>
+// Unique: kfuzz.cilium.io/unique = <unique-value>
+// Bucket: kfuzz.cilium.io/bucket-<bucket-size> = <bucket-pool-value>
 func (l *LabelManager) AllocateLabels(ctx *FuzzContext) map[string]string {
 	lbls := make(map[string]string, len(l.staticLabels)+1+len(l.pools))
 
