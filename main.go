@@ -28,7 +28,7 @@ var hiveApp = hive.NewWithOptions(
 
 	cell.Module(
 		"kfuzz",
-		"Fuzzes Cilium resources against a Kubernetes cluster",
+		"Fuzz Cilium resources against a Kubernetes cluster",
 
 		cell.Config(lib.HarnessConfig{}),
 		cell.Config(lib.ClientConfig{}),
